@@ -1,6 +1,8 @@
 # VJH Anesthesia: Today
 
-The Today page of the Vernon Jubilee Hospital Department of Anesthesia: where every member is on any day, and who is on call right now. Version 3.0, November 2026.
+The Today page of the Vernon Jubilee Hospital Department of Anesthesia: where every member is on any day, and who is on call right now. Version 3.1, November 2026.
+
+From 3.1 the page also has a calendar, reached from Calendar in the top bar: the same schedule as a scrolling list of days, a week grid of every member, or a month of the reader's own assignments. It uses the schedule the page has already read, so it asks nothing more of the calendar service and works offline.
 
 ## How it works
 
