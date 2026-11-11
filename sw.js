@@ -1,12 +1,12 @@
 /*
- * VJH Today 3.0: the offline copy of the page's own files, so the page opens with no signal.
+ * VJH Today 3.1: the offline copy of the page's own files, so the page opens with no signal.
  * Network first: online, every file comes fresh from GitHub Pages (an update shows the next time the
  * page opens) and the copy is renewed; offline, or after six seconds with no answer, the copy is used.
  * Only this site's own files pass through here. The schedule request goes to Google directly and is
  * never seen, kept or answered by this worker; the page keeps its last schedule itself.
  */
-var CACHE = 'vjh-today-3.0';
-var FILES = ['./', 'app.css?v=3.0', 'app.js?v=3.0', 'img/laryngoscope.webp', 'icons/apple-touch-icon.png', 'icons/favicon-48.png',
+var CACHE = 'vjh-today-3.1';
+var FILES = ['./', 'app.css?v=3.1', 'app.js?v=3.1', 'img/laryngoscope.webp', 'icons/apple-touch-icon.png', 'icons/favicon-48.png',
   'fonts/atkinson-hyperlegible-next-latin-400-normal.woff2', 'fonts/atkinson-hyperlegible-next-latin-600-normal.woff2',
   'fonts/atkinson-hyperlegible-next-latin-700-normal.woff2'];
 var WAIT_MS = 6000;

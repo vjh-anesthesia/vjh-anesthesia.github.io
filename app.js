@@ -1,5 +1,5 @@
 /*
- * VJH Anesthesia: Today. Version 3.0, 8 November 2026 (the GitHub Pages edition).
+ * VJH Anesthesia: Today. Version 3.1, 11 November 2026 (the GitHub Pages edition, with the calendar).
  * Requires the calendar service (VJH_Calendar.gs) version 3.0 or later; 3.4 issues links to this page.
  *
  * WHAT IT IS
@@ -17,8 +17,14 @@
  *   says when what it shows was read. A refusal (link retired, member no longer on the schedule, link not
  *   valid) erases both. A temporary failure (no connection, the service unable to read the Sheet just
  *   now, a reply that is not usable data) keeps the schedule on screen and says it could not refresh.
+ * - Which calendar layout (Days, Week or Month) was used last, so the calendar opens in it again.
  * The service worker (sw.js) keeps a copy of the page's own files for opening offline; it never sees
  * the schedule request.
+ *
+ * THE CALENDAR (3.1)
+ * A second view, reached from Calendar in the day view's top bar: the same reading of the schedule over
+ * many days, as a scrolling list of days, a week grid of every member, or a month of the reader's own
+ * assignments. It asks nothing more of the calendar service and works offline like the day view.
  *
  * LINK OPTIONS (after the key, joined with &)
  *   date=2026-12-24   open on that date instead of today (a real calendar date; anything else is ignored)
@@ -37,7 +43,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '3.0';
+  var VERSION = '3.1';
   // The calendar web app (the schedule Sheet's project). Not a secret: it returns nothing without a member key.
   var SERVICE = 'https://script.google.com/macros/s/AKfycbxPz7RiFA6CFB77qRqqQZ8wz23HNM-VpWC5mWmKYeMgYPUCdLexJPlspH4MzyK82UzBrQ/exec';
   var STORE_KEY = 'vjhToday.key', STORE_DATA = 'vjhToday.schedule';
@@ -258,7 +264,9 @@
   }
 
   // ---- state
-  var state = { date: null, person: null, personName: null, from: null, weeks: 1, dayScroll: 0, notice: null };
+  // cal: null in the day view, else the calendar layout showing; calDate: its chosen date (in Days, the first day listed);
+  // calTop: in Days, the day at the top of the screen; calEnd: in Days, the first day not yet listed.
+  var state = { date: null, person: null, personName: null, from: null, weeks: 1, dayScroll: 0, notice: null, cal: null, calDate: null, calTop: null, calEnd: null };
   // Opened without date=, the page follows today across midnight; opened on a named date, it stays there.
   var followToday = true, lastToday = null, started = false;
   var nowBox = null, staleBox = null;
@@ -277,6 +285,7 @@
     bar.appendChild(el('span', 'brand', 'VJH Anesthesia'));
     var t = todayIso();
     if (iso !== t && inRange(t)) { var tb = button('link', 'Today'); tb.setAttribute('data-go', t); bar.appendChild(tb); }
+    bar.appendChild(button('link', 'Calendar', 'data-cal-open'));
     if (D.me >= 0) { var mb = button('link', 'My schedule'); mb.setAttribute('data-m', D.me); bar.appendChild(mb); }
     top.appendChild(bar);
 
@@ -471,11 +480,11 @@
     return frag;
   }
 
-  function footer() {
+  function footer(hint) {
     var f = el('footer', 'foot');
     f.appendChild(el('p', '', 'Read from the schedule Sheet at ' + readWhen() +
       '. Your calendar link uses the same reading. For a change made today, the Sheet is the record.'));
-    f.appendChild(el('p', '', 'Tap a name for that person’s next four weeks. Swipe, or use the arrows, to change day.'));
+    f.appendChild(el('p', '', hint || 'Tap a name for that person’s next four weeks. Swipe, or use the arrows, to change day.'));
     var rb = button('link', refreshing ? 'Refreshing…' : 'Refresh from the Sheet', 'data-refresh');
     rb.disabled = refreshing;
     f.appendChild(kids(el('p'), rb));
@@ -519,7 +528,7 @@
   }
   function personView() {
     var m = state.person, frag = document.createDocumentFragment();
-    var back = button('back', '‹ Back to ' + shortDate(state.date), 'data-back');
+    var back = button('back', state.cal ? '‹ Back to the calendar' : '‹ Back to ' + shortDate(state.date), 'data-back');
     frag.appendChild(kids(el('div', 'bar'), back));
     var wrap = el('div', 'person');
     wrap.appendChild(el('h1', '', D.members[m]));
@@ -550,10 +559,389 @@
     return frag;
   }
 
+  // ---- the calendar (3.1): the schedule already on the phone, over many days, in three layouts.
+  // Days is one continuous list from a chosen date; Week is every member against Monday to Friday;
+  // Month shows the reader's own assignment under each date and, below, everyone on the chosen date.
+  // Nothing new is asked of the calendar service: every layout draws the reading the day view uses.
+  var STORE_CAL = 'vjhToday.cal', CAL_FIRST_DAYS = 21, CAL_MORE_DAYS = 28;
+  var THEME = { day: ['#FEFAE7', '#00313C'], cal: ['#00313C', '#016379'] };   // browser bar colour: [light, dark]
+  var SHORT = { daycall: 'Day', nightcall: 'Night', pac2: 'PAC2', post: 'Post', vacation: 'Vac', dayoff: 'Off', closure: 'Closed', flagged: 'Check' };
+  var calRefs = null, calWatch = null, calFrame = 0;
+
+  function calKind(s) { return s === 'week' || s === 'month' ? s : 'days'; }
+  // The calendar's header is a solid band, so the page loses its top padding and the browser's own bar takes the band's colour.
+  function chrome(cal) {
+    app.className = 'wrap' + (cal ? ' cal' : '');
+    var metas = document.querySelectorAll('meta[name="theme-color"]');
+    for (var i = 0; i < metas.length; i++) {
+      var dark = /dark/.test(metas[i].getAttribute('media') || '');
+      metas[i].setAttribute('content', THEME[cal ? 'cal' : 'day'][dark ? 1 : 0]);
+    }
+  }
+  function monthTitle(iso) { return MON[+iso.slice(5, 7) - 1] + ' ' + iso.slice(0, 4); }
+  function monthStart(iso) { return iso.slice(0, 8) + '01'; }
+  function addMonths(iso, n) {
+    var y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1 + n, d = +iso.slice(8, 10);
+    y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+    var last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return y + '-' + pad(m + 1) + '-' + pad(Math.min(d, last));
+  }
+  function mondayOf(iso) { return add(iso, -((dow(iso) + 6) % 7)); }
+  // The date the calendar is showing: in Days, the day at the top of the screen; otherwise the chosen date.
+  function calShown() { return state.cal === 'days' ? (state.calTop || state.calDate) : state.calDate; }
+  // A cell in a few letters, for the grids. An operating room is its service's first word; the surgeon is in the day view.
+  function abbr(x) {
+    var k = kindOf(x);
+    if (k === 'gap') return '';
+    if (k === 'none') return '–';
+    if (k === 'or') {
+      var p = splitRoom(x[1]), w = String(p[0] || p[1] || 'OR').trim().split(/\s+/)[0] || 'OR';
+      return w.length > 4 ? w.slice(0, 4) : w;
+    }
+    return SHORT[k] || 'Check';
+  }
+  function fullText(x) {
+    var k = kindOf(x);
+    if (k === 'gap') return 'Schedule unavailable';
+    if (k === 'none') return 'Nothing listed';
+    if (k === 'or') return (x[1] || 'Room not yet named') + ', ' + span(x[2], x[3]);
+    if (k === 'flagged') return 'Check the Sheet: “' + x[1] + '”';
+    return (LABEL[k] || x[1]) + (x[2] ? ', ' + span(x[2], x[3]) : '');
+  }
+  function calGo(iso) {
+    state.calDate = iso; state.calTop = iso; state.calEnd = null;
+    render(); window.scrollTo(0, 0);
+  }
+
+  // The title doubles as the date chooser, as the day view's date does.
+  function calPick(text) {
+    var lab = el('label', 'cpick'), inp = el('input'), ttl = el('span', 'ctitle', text);
+    inp.type = 'date'; inp.min = FIRST; inp.max = LAST; inp.value = calShown();
+    inp.setAttribute('aria-label', 'Choose a date');
+    inp.addEventListener('change', function () { if (validIso(inp.value)) calGo(clamp(inp.value)); });
+    inp.addEventListener('click', function () { try { if (inp.showPicker) inp.showPicker(); } catch (err) { /* the native tap still opens it */ } });
+    kids(lab, inp, ttl);
+    return { node: lab, title: ttl, input: inp };
+  }
+  function calStep(ch, iso, label, ok) {
+    var b = button('cstep', ch);
+    b.setAttribute('data-cgo', clamp(iso)); b.setAttribute('aria-label', label);
+    b.disabled = !ok;
+    return b;
+  }
+  function calStrip(iso) {
+    var wk = el('nav', 'week'), t = todayIso(), mon = mondayOf(iso);
+    wk.setAttribute('aria-label', 'Week');
+    var prev = button('step', '‹'); prev.setAttribute('data-cgo', clamp(add(iso, -7))); prev.setAttribute('aria-label', 'Previous week');
+    prev.disabled = iso <= FIRST;
+    wk.appendChild(prev);
+    for (var i = 0; i < 7; i++) {
+      var d = add(mon, i), gap = inRange(d) && !has(d);
+      var b = button('day' + (d === iso ? ' sel' : '') + (d === t ? ' today' : '') + (HOL[d] ? ' hol' : '') + (gap ? ' gap' : ''));
+      b.setAttribute('data-cgo', d);
+      b.setAttribute('aria-label', WD[dow(d)] + ' ' + longDate(d) + (HOL[d] ? ', statutory holiday' : '') + (gap ? ', schedule unavailable' : ''));
+      if (d === iso) b.setAttribute('aria-current', 'date');
+      b.disabled = !inRange(d);
+      kids(b, el('span', 'l', 'MTWTFSS'.charAt(i)), el('span', 'n', String(+d.slice(8, 10))));
+      wk.appendChild(b);
+    }
+    var next = button('step', '›'); next.setAttribute('data-cgo', clamp(add(iso, 7))); next.setAttribute('aria-label', 'Next week');
+    next.disabled = iso >= LAST;
+    wk.appendChild(next);
+    return wk;
+  }
+  function calHead() {
+    var head = el('header', 'calhead'), row = el('div', 'crow'), seg = el('div', 'seg');
+    row.appendChild(button('clink', '‹ Day view', 'data-cal-exit'));
+    seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Calendar layout');
+    [['days', 'Days'], ['week', 'Week'], ['month', 'Month']].forEach(function (v) {
+      var b = button(v[0] === state.cal ? 'on' : '', v[1]);
+      b.setAttribute('data-cal', v[0]); b.setAttribute('aria-pressed', v[0] === state.cal ? 'true' : 'false');
+      seg.appendChild(b);
+    });
+    row.appendChild(seg); head.appendChild(row);
+    calRefs = { head: head };
+    var row2 = el('div', 'crow'), p;
+    if (state.cal === 'days') {
+      p = calPick(monthTitle(calShown()));
+      kids(row2, p.node, el('span', 'cread', 'Read ' + readWhen()));
+      head.appendChild(row2);
+      calRefs.title = p.title; calRefs.input = p.input;
+      calRefs.strip = calStrip(calShown());
+      head.appendChild(calRefs.strip);
+    } else if (state.cal === 'week') {
+      var mon = mondayOf(state.calDate), fri = add(mon, 4);
+      p = calPick((mon.slice(0, 7) === fri.slice(0, 7) ? String(+mon.slice(8, 10)) : dayMonth(mon)) + ' – ' + dayMonth(fri) + ' ' + fri.slice(0, 4));
+      row2.className = 'crow cnav';
+      kids(row2, calStep('‹', add(state.calDate, -7), 'Previous week', add(mon, -1) >= FIRST), p.node,
+        calStep('›', add(state.calDate, 7), 'Next week', add(mon, 7) <= LAST));
+      head.appendChild(row2);
+    } else {
+      var ms = monthStart(state.calDate);
+      p = calPick(monthTitle(state.calDate));
+      row2.className = 'crow cnav';
+      kids(row2, calStep('‹', addMonths(state.calDate, -1), 'Previous month', add(ms, -1) >= FIRST), p.node,
+        calStep('›', addMonths(state.calDate, 1), 'Next month', addMonths(ms, 1) <= LAST));
+      head.appendChild(row2);
+    }
+    return head;
+  }
+
+  // One day, compactly: call, rooms and clinic as rows (name, assignment, hours); everyone else in a sentence.
+  function calRow(m, what, time) {
+    return kids(el('li', m === D.me ? 'me' : ''), who(m), kids(el('span', 'w'), what, time ? el('span', 't', time) : null));
+  }
+  function calNames(arr) { return arr.map(function (c) { return D.members[c.m]; }).join(', '); }
+  function calDayBody(iso, extra) {
+    var body = el('div', 'cbody');
+    if (!has(iso)) { body.appendChild(el('p', 'ctail', 'Schedule unavailable: the Sheet has no column for this date.')); return body; }
+    var by = { daycall: [], nightcall: [], or: [], pac2: [], post: [], vacation: [], dayoff: [], closure: [], flagged: [], none: [] };
+    D.members.forEach(function (_, m) { var x = cell(iso, m); (by[kindOf(x)] || by.flagged).push({ m: m, x: x }); });
+    if (HOL[iso]) body.appendChild(el('p', 'cnote hol', 'Statutory holiday'));
+    if (LATE[iso]) body.appendChild(el('p', 'cnote', 'Late-start Thursday: rooms open at 0830'));
+    var g, calls = by.daycall.concat(by.nightcall);
+    if (calls.length) {
+      g = el('ul', 'cg call');
+      calls.forEach(function (c) { g.appendChild(calRow(c.m, el('span', 'what', LABEL[c.x[0]]), span(c.x[2], c.x[3]))); });
+      body.appendChild(g);
+    }
+    if (by.or.length) {
+      by.or.sort(function (a, b) { return a.x[1] < b.x[1] ? -1 : a.x[1] > b.x[1] ? 1 : a.m - b.m; });
+      var hours = {};
+      by.or.forEach(function (c) { hours[span(c.x[2], c.x[3])] = true; });
+      var one = Object.keys(hours).length === 1;
+      g = el('ul', 'cg or');
+      by.or.forEach(function (c) { g.appendChild(calRow(c.m, roomNode(c.x[1]), one ? '' : span(c.x[2], c.x[3]))); });
+      body.appendChild(g);
+    }
+    if (by.pac2.length) {
+      g = el('ul', 'cg pac2');
+      by.pac2.forEach(function (c) { g.appendChild(calRow(c.m, el('span', 'what', 'PAC2 clinic'), span(c.x[2], c.x[3]))); });
+      body.appendChild(g);
+    }
+    if (by.flagged.length) {
+      g = el('ul', 'cg flag');
+      by.flagged.forEach(function (c) { g.appendChild(calRow(c.m, el('span', 'what', c.x ? 'Check the Sheet: “' + c.x[1] + '”' : 'Check the Sheet'), '')); });
+      body.appendChild(g);
+    }
+    var tail = [];
+    if (by.post.length) tail.push('Post call: ' + calNames(by.post));
+    if (by.vacation.length) tail.push('Vacation: ' + calNames(by.vacation));
+    if (by.dayoff.length) tail.push('Day off: ' + calNames(by.dayoff));
+    if (by.closure.length) tail.push('OR closure: ' + calNames(by.closure));
+    if (tail.length) body.appendChild(el('p', 'ctail', tail.join('. ') + '.'));
+    if (by.none.length === D.members.length) body.appendChild(el('p', 'ctail', 'Nothing is listed in the Sheet for this day.'));
+    if (extra) body.appendChild(el('p', 'ctail', extra));
+    return body;
+  }
+  // A Saturday whose Sunday reads exactly the same for every member (the usual weekend) is shown once for both days.
+  function sameWeekend(sat) {
+    var sun = add(sat, 1);
+    if (dow(sat) !== 6 || !has(sat) || !has(sun) || !!HOL[sat] !== !!HOL[sun]) return false;
+    var a = D.cells[idx[sat]], b = D.cells[idx[sun]];
+    for (var m = 0; m < a.length; m++) {
+      if (a[m] === b[m]) continue;
+      var x = D.info[a[m]], y = D.info[b[m]];
+      if (!x || !y || x.join('\u0001') !== y.join('\u0001')) return false;
+    }
+    return true;
+  }
+  function calSection(iso, merged) {
+    var sun = merged ? add(iso, 1) : '', t = todayIso(), today = iso === t || sun === t;
+    var sec = el('section', 'cday' + (today ? ' today' : '') + (HOL[iso] ? ' hol' : ''));
+    sec.setAttribute('data-day', iso);
+    var b = button('cdate');
+    b.setAttribute('data-cal-day', sun === t ? sun : iso);
+    b.setAttribute('aria-label', (merged ? 'Saturday ' + longDate(iso) + ' and Sunday ' + longDate(sun) : WD[dow(iso)] + ' ' + longDate(iso)) + ', open in the day view');
+    kids(b, el('span', 'wd', merged ? 'Sat–Sun' : WDS[dow(iso)]),
+      el('span', 'n' + (merged ? ' two' : ''), (+iso.slice(8, 10)) + (merged ? '–' + (+sun.slice(8, 10)) : '')),
+      today ? el('span', 'td', 'Today') : null);
+    return kids(sec, b, calDayBody(iso, merged ? 'The same on both days.' : ''));
+  }
+  // The days from one date to another, as sections; next is the first day not drawn (a shared weekend is never split).
+  function buildDays(from, to) {
+    var frag = document.createDocumentFragment(), d = from;
+    while (d <= to && d <= LAST) {
+      var merged = sameWeekend(d);
+      if (d !== state.calDate && (d.slice(8) === '01' || (merged && add(d, 1).slice(8) === '01'))) {
+        frag.appendChild(el('h2', 'cmonth', monthTitle(merged ? add(d, 1) : d)));
+      }
+      frag.appendChild(calSection(d, merged));
+      d = add(d, merged ? 2 : 1);
+    }
+    return { frag: frag, next: d };
+  }
+  // The end of the list: a button for more days, pressed by itself as it nears the screen, or where the schedule ends.
+  function calTail() {
+    if (calWatch) { calWatch.disconnect(); calWatch = null; }
+    var node;
+    if (state.calEnd > LAST) node = el('p', 'empty', 'The schedule ends on ' + shortDate(LAST) + ' ' + LAST.slice(0, 4) + '.');
+    else {
+      node = button('more', 'Show more days', 'data-cal-more');
+      if (window.IntersectionObserver) {
+        calWatch = new IntersectionObserver(function (entries) {
+          for (var i = 0; i < entries.length; i++) if (entries[i].isIntersecting) { calMore(); return; }
+        }, { rootMargin: '600px 0px' });
+        calWatch.observe(node);
+      }
+    }
+    calRefs.more = node;
+    return node;
+  }
+  function calMore() {
+    if (!D || state.cal !== 'days' || state.person != null || !calRefs || !calRefs.list || !state.calEnd || state.calEnd > LAST) return;
+    var r = buildDays(state.calEnd, add(state.calEnd, CAL_MORE_DAYS - 1));
+    state.calEnd = r.next;
+    calRefs.list.appendChild(r.frag);
+    var old = calRefs.more, fresh = calTail();
+    if (old && old.parentNode) old.parentNode.replaceChild(fresh, old);
+  }
+  function calDays() {
+    var wrap = el('div', 'cdays'), listEl = el('div', 'clist');
+    if (state.calDate > FIRST) wrap.appendChild(button('more cearlier', 'Show the week before', 'data-cal-earlier'));
+    var r = buildDays(state.calDate, state.calEnd ? add(state.calEnd, -1) : add(state.calDate, CAL_FIRST_DAYS - 1));
+    state.calEnd = r.next;
+    listEl.appendChild(r.frag);
+    calRefs.list = listEl;
+    return kids(wrap, listEl, calTail());
+  }
+  // Adds the seven days before the list's first day, and leaves the day that was first where it was on screen.
+  function calEarlier() {
+    var old = state.calDate;
+    state.calDate = clamp(add(old, -7)); state.calTop = old;
+    render();
+    var sec = app.querySelector('.cday[data-day="' + old + '"]');
+    if (sec && calRefs) window.scrollTo(0, Math.max(0, sec.getBoundingClientRect().top + window.scrollY - calRefs.head.offsetHeight));
+    else window.scrollTo(0, 0);
+    calSync();
+  }
+  // While the list scrolls, the header follows the day at the top of the screen: its month, and its place in the week.
+  function calSync() {
+    calFrame = 0;
+    if (!D || state.cal !== 'days' || state.person != null || !calRefs || !calRefs.list || !calRefs.strip) return;
+    var edge = calRefs.head.getBoundingClientRect().bottom + 16, secs = calRefs.list.children, top = null;
+    for (var i = 0; i < secs.length; i++) {
+      if (secs[i].hasAttribute('data-day') && secs[i].getBoundingClientRect().bottom > edge) { top = secs[i].getAttribute('data-day'); break; }
+    }
+    if (!top || top === state.calTop) return;
+    state.calTop = top;
+    calRefs.title.textContent = monthTitle(top);
+    calRefs.input.value = top;
+    var strip = calStrip(top);
+    calRefs.strip.parentNode.replaceChild(strip, calRefs.strip);
+    calRefs.strip = strip;
+  }
+  window.addEventListener('scroll', function () {
+    if (!calFrame && D && state.cal === 'days' && state.person == null) {
+      calFrame = window.requestAnimationFrame ? window.requestAnimationFrame(calSync) : setTimeout(calSync, 50);
+    }
+  }, { passive: true });
+
+  function callText(d) {
+    if (!has(d)) return 'Schedule unavailable.';
+    var day = [], night = [];
+    D.members.forEach(function (_, m) {
+      var x = cell(d, m);
+      if (x && (x[0] === 'daycall' || x[0] === 'nightcall')) (x[0] === 'daycall' ? day : night).push(LABEL[x[0]] + ' ' + D.members[m] + ' ' + span(x[2], x[3]));
+    });
+    var out = day.concat(night);
+    return out.length ? out.join('. ') + '.' : 'No call listed.';
+  }
+  function calWeek() {
+    var mon = mondayOf(state.calDate), sat = add(mon, 5), sun = add(mon, 6), t = todayIso(), busy = false, i;
+    // A weekend with rooms or clinic listed gets its own columns; the usual weekend, call only, is a line below.
+    [sat, sun].forEach(function (d) {
+      if (!has(d)) return;
+      D.members.forEach(function (_, m) { var k = kindOf(cell(d, m)); if (k === 'or' || k === 'pac2' || k === 'flagged') busy = true; });
+    });
+    var n = busy ? 7 : 5, wrap = el('div', 'cweekview'), box = el('div', 'wkscroll'), table = el('table', 'wk' + (busy ? ' wide' : ''));
+    wrap.setAttribute('data-day', inRange(mon) ? mon : state.calDate);
+    var thead = el('thead'), tr = el('tr'), corner = el('th');
+    corner.setAttribute('scope', 'col'); corner.appendChild(el('span', 'sr', 'Name'));
+    tr.appendChild(corner);
+    for (i = 0; i < n; i++) {
+      var d = add(mon, i), th = el('th', (d === t ? 'today' : '') + (HOL[d] ? ' hol' : '')), b = button('wkday');
+      th.setAttribute('scope', 'col');
+      b.setAttribute('data-cal-day', d); b.disabled = !inRange(d);
+      b.setAttribute('aria-label', WD[dow(d)] + ' ' + longDate(d) + (HOL[d] ? ', statutory holiday' : '') + ', open in the day view');
+      kids(b, el('span', 'l', WDS[dow(d)]), el('span', 'n', String(+d.slice(8, 10))));
+      th.appendChild(b); tr.appendChild(th);
+    }
+    thead.appendChild(tr); table.appendChild(thead);
+    var tb = el('tbody');
+    D.members.forEach(function (_, m) {
+      var r = el('tr', m === D.me ? 'me' : ''), h = el('th');
+      h.setAttribute('scope', 'row'); h.appendChild(who(m)); r.appendChild(h);
+      for (var j = 0; j < n; j++) {
+        var x = cell(add(mon, j), m), td = el('td'), c = el('span', 'c k-' + kindOf(x), abbr(x));
+        if (x) c.title = fullText(x);
+        td.appendChild(c); r.appendChild(td);
+      }
+      tb.appendChild(r);
+    });
+    table.appendChild(tb); box.appendChild(table); wrap.appendChild(box);
+    if (!busy && (inRange(sat) || inRange(sun))) {
+      var a = callText(sat), z = callText(sun), lines = [];
+      if (inRange(sat) && inRange(sun) && a === z) lines.push([sat, 'Sat ' + dayMonth(sat) + ' and Sun ' + dayMonth(sun), a]);
+      else { if (inRange(sat)) lines.push([sat, shortDate(sat), a]); if (inRange(sun)) lines.push([sun, shortDate(sun), z]); }
+      lines.forEach(function (l) {
+        var p = el('p', 'wkend'), lb = button('link', l[1]);
+        lb.setAttribute('data-cal-day', l[0]);
+        kids(p, lb, document.createTextNode(' ' + l[2]));
+        wrap.appendChild(p);
+      });
+    }
+    return wrap;
+  }
+
+  function calMonth() {
+    var sel = state.calDate, ym = sel.slice(0, 7), t = todayIso(), wrap = el('div', 'cmonthview');
+    wrap.setAttribute('data-day', sel);
+    var hd = el('div', 'mgrid mhead'), grid = el('div', 'mgrid'), d = mondayOf(monthStart(sel)), i;
+    hd.setAttribute('aria-hidden', 'true');
+    for (i = 0; i < 7; i++) hd.appendChild(el('span', '', 'MTWTFSS'.charAt(i)));
+    do {
+      for (i = 0; i < 7; i++) {
+        var x = D.me >= 0 ? cell(d, D.me) : undefined, k = D.me >= 0 ? kindOf(x) : 'gap', gap = inRange(d) && !has(d);
+        var mine = (k === 'gap' || k === 'none') ? '' : abbr(x);
+        var b = button('mday' + (d === sel ? ' sel' : '') + (d === t ? ' today' : '') + (HOL[d] ? ' hol' : '') + (d.slice(0, 7) !== ym ? ' out' : '') + (gap ? ' gap' : ''));
+        b.setAttribute('data-cgo', d);
+        b.setAttribute('aria-label', WD[dow(d)] + ' ' + longDate(d) + (d === t ? ', today' : '') + (HOL[d] ? ', statutory holiday' : '') +
+          (gap ? ', schedule unavailable' : '') + (mine ? ', you: ' + fullText(x) : ''));
+        if (d === sel) b.setAttribute('aria-current', 'date');
+        b.disabled = !inRange(d);
+        kids(b, el('span', 'n', String(+d.slice(8, 10))), el('span', 'c k-' + k, mine || ' '));
+        grid.appendChild(b);
+        d = add(d, 1);
+      }
+    } while (d.slice(0, 7) === ym);
+    kids(wrap, hd, grid, el('p', 'ctail mcap', D.me >= 0 ? 'Each date shows your own assignment. Tap a date for everyone that day.' : 'Tap a date for everyone that day.'));
+    var panel = el('section', 'mpanel'), ph = el('div', 'mhd'), open = button('link', 'Open in the day view');
+    open.setAttribute('data-cal-day', sel);
+    kids(ph, el('h2', '', WD[dow(sel)] + ' ' + (+sel.slice(8, 10)) + ' ' + MON[+sel.slice(5, 7) - 1]), open);
+    kids(panel, ph, calDayBody(sel, ''));
+    wrap.appendChild(panel);
+    return wrap;
+  }
+
+  function calView() {
+    if (!inRange(state.calDate)) { state.calDate = clamp(todayIso()); state.calTop = null; state.calEnd = null; }
+    if (state.calTop && !inRange(state.calTop)) state.calTop = null;
+    if (state.calEnd && state.calEnd <= state.calDate) state.calEnd = null;
+    state.cal = calKind(state.cal);
+    var main = el('main', 'calview');
+    main.appendChild(calHead());
+    main.appendChild(state.cal === 'week' ? calWeek() : state.cal === 'month' ? calMonth() : calDays());
+    main.appendChild(footer('Tap a date to open that day in the day view. Tap a name for that person’s next four weeks.'));
+    return main;
+  }
+
   // ---- render and events
   function render(dir) {
     app.textContent = '';
-    nowBox = null;
+    nowBox = null; calRefs = null;
+    if (calWatch) { calWatch.disconnect(); calWatch = null; }
+    chrome(!!state.cal && state.person == null);
     if (D.preview) app.appendChild(el('p', 'ribbon', D.preview));
     staleBox = staleNotice();
     if (staleBox) app.appendChild(staleBox);
@@ -565,6 +953,7 @@
       state.notice = null;
     }
     if (state.person != null) { app.appendChild(personView()); return; }
+    if (state.cal) { app.appendChild(calView()); return; }
     var main = el('main', dir ? 'in-' + dir : '');
     main.appendChild(header(state.date));
     if (state.date === todayIso() && inRange(state.date)) { nowBox = nowBand(); main.appendChild(nowBox); }
@@ -575,17 +964,47 @@
   function renderInPlace() { var y = window.scrollY; render(); window.scrollTo(0, y); }
 
   app.addEventListener('click', function (e) {
-    var t = e.target.closest ? e.target.closest('[data-m],[data-go],[data-back],[data-more],[data-refresh],[data-retry],[data-paste]') : null;
+    var t = e.target.closest ? e.target.closest('[data-m],[data-go],[data-back],[data-more],[data-refresh],[data-retry],[data-paste],[data-cal-open],[data-cal-exit],[data-cal],[data-cgo],[data-cal-day],[data-cal-more],[data-cal-earlier]') : null;
     if (!t || t.disabled) return;
     if (t.hasAttribute('data-paste')) { askForLink(''); return; }
     if (t.hasAttribute('data-refresh') || t.hasAttribute('data-retry')) { if (D) refresh(); else load(); return; }
     if (!D) return;
+    var ci;
+    if (t.hasAttribute('data-cal-open')) {
+      state.cal = calKind(recall(STORE_CAL));
+      state.calDate = inRange(state.date) ? state.date : clamp(todayIso());
+      state.calTop = state.calDate; state.calEnd = null;
+      render(); window.scrollTo(0, 0); return;
+    }
+    if (t.hasAttribute('data-cal-exit')) { state.cal = null; render(); window.scrollTo(0, 0); return; }
+    if (t.hasAttribute('data-cal-day')) {
+      ci = t.getAttribute('data-cal-day');
+      if (!inRange(ci)) return;
+      state.cal = null; go(ci); window.scrollTo(0, 0); return;
+    }
+    if (t.hasAttribute('data-cal')) {
+      ci = calShown();
+      state.cal = calKind(t.getAttribute('data-cal')); store(STORE_CAL, state.cal);
+      state.calDate = ci; state.calTop = ci; state.calEnd = null;
+      render(); window.scrollTo(0, 0); return;
+    }
+    if (t.hasAttribute('data-cgo')) {
+      ci = t.getAttribute('data-cgo');
+      if (!inRange(ci) || !state.cal) return;
+      if (state.cal === 'days') calGo(ci);
+      else { state.calDate = ci; state.calTop = ci; renderInPlace(); }
+      return;
+    }
+    if (t.hasAttribute('data-cal-more')) { calMore(); return; }
+    if (t.hasAttribute('data-cal-earlier')) { calEarlier(); return; }
     if (t.hasAttribute('data-go')) { var iso = t.getAttribute('data-go'); go(iso, iso > state.date ? 'l' : 'r'); return; }
     if (t.hasAttribute('data-m')) {
       state.dayScroll = window.scrollY;
       state.person = +t.getAttribute('data-m');
       state.personName = D.members[state.person];
-      state.from = inRange(state.date) ? state.date : todayIso();
+      // From the calendar, the four weeks begin on the day the name was tapped in.
+      var sec = state.cal && t.closest('[data-day]'), secDay = sec ? sec.getAttribute('data-day') : '';
+      state.from = inRange(secDay) ? secDay : inRange(state.date) ? state.date : todayIso();
       state.weeks = 1;
       render(); window.scrollTo(0, 0); return;
     }
@@ -594,7 +1013,7 @@
   });
 
   document.addEventListener('keydown', function (e) {
-    if (!D || state.person != null || (e.target && e.target.tagName === 'INPUT')) return;
+    if (!D || state.person != null || state.cal || (e.target && e.target.tagName === 'INPUT')) return;
     if (e.key === 'ArrowLeft') go(add(state.date, -1), 'r');
     if (e.key === 'ArrowRight') go(add(state.date, 1), 'l');
   });
@@ -602,7 +1021,7 @@
   var sx = null, sy = null;
   app.addEventListener('touchstart', function (e) { if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; } }, { passive: true });
   app.addEventListener('touchend', function (e) {
-    if (sx == null || !D || state.person != null) return;
+    if (sx == null || !D || state.person != null || state.cal) return;
     var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
     sx = null;
     if (Math.abs(dx) > 60 && Math.abs(dy) < 45) go(add(state.date, dx < 0 ? 1 : -1), dx < 0 ? 'l' : 'r');
@@ -634,6 +1053,7 @@
 
   // ---- loading, refreshing and failing
   function showLoading() {
+    chrome(false);
     app.innerHTML = LOADING_HTML;
     window.scrollTo(0, 0);
   }
@@ -641,6 +1061,7 @@
     // Block navigation and ticks from bringing back a snapshot after a refusal.
     D = null; idx = {}; HOL = {}; LATE = {}; FIRST = ''; LAST = '';
     nowBox = null; staleBox = null; started = false;
+    chrome(false);
     app.textContent = '';
     var box = el('div', 'loading');
     box.setAttribute('role', 'alert');
@@ -756,6 +1177,7 @@
   function askForLink(problem) {
     seq++; clearTimeout(slowTimer);
     D = null; started = false; loading = false; refreshing = false;
+    chrome(false);
     app.textContent = '';
     var box = el('div', 'loading');
     var form = el('div', 'paste');
@@ -783,7 +1205,7 @@
   function openKey(k, date) {
     seq++; clearTimeout(slowTimer); loading = false; refreshing = false;   // an answer still on its way for another link is ignored
     K = k; LINK_DATE = date || ''; START_DATE = validIso(date) ? date : '';
-    state = { date: null, person: null, personName: null, from: null, weeks: 1, dayScroll: 0, notice: null };
+    state = { date: null, person: null, personName: null, from: null, weeks: 1, dayScroll: 0, notice: null, cal: null, calDate: null, calTop: null, calEnd: null };
     started = false; refreshFailed = false; D = null;
     // Keep the key in the address, after the #: a home screen icon added now opens this person's page.
     var want = '#k=' + k + (START_DATE ? '&date=' + START_DATE : '');
