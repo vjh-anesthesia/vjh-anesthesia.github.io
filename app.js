@@ -1,5 +1,5 @@
 /*
- * VJH Anesthesia: Today. Version 3.1, 11 November 2026 (the GitHub Pages edition, with the calendar).
+ * VJH Anesthesia: Today. Version 3.2, 20 November 2026 (the GitHub Pages edition, with the calendar).
  * Requires the calendar service (VJH_Calendar.gs) version 3.0 or later; 3.4 issues links to this page.
  *
  * WHAT IT IS
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '3.1';
+  var VERSION = '3.2';
   // The calendar web app (the schedule Sheet's project). Not a secret: it returns nothing without a member key.
   var SERVICE = 'https://script.google.com/macros/s/AKfycbxPz7RiFA6CFB77qRqqQZ8wz23HNM-VpWC5mWmKYeMgYPUCdLexJPlspH4MzyK82UzBrQ/exec';
   var STORE_KEY = 'vjhToday.key', STORE_DATA = 'vjhToday.schedule';
@@ -359,13 +359,22 @@
     return '';
   }
   // The band stands beside a laryngoscope drawn as a street light: its bulb lights whoever is on call.
+  // 3.2: the picture is made once and the same element is moved into every redraw of the band. A new
+  // image element each time (every 30 seconds, and on every refresh) could be painted blank on an iPhone
+  // until it was fetched and decoded again, so the laryngoscope seemed to come and go.
+  var lampImg = null;
+  function lamp() {
+    if (!lampImg) {
+      lampImg = el('img', 'lamp');
+      lampImg.src = 'img/laryngoscope.webp'; lampImg.alt = ''; lampImg.width = 85; lampImg.height = 148;
+      lampImg.setAttribute('aria-hidden', 'true');
+    }
+    return lampImg;
+  }
   function nowBand() {
     var post = el('section', 'lamppost');
     post.setAttribute('aria-label', 'On call now');
-    var img = el('img', 'lamp');
-    img.src = 'img/laryngoscope.webp'; img.alt = ''; img.width = 85; img.height = 148; img.decoding = 'async';
-    img.setAttribute('aria-hidden', 'true');
-    post.appendChild(img);
+    post.appendChild(lamp());
     var glow = el('span', 'glow'); glow.setAttribute('aria-hidden', 'true');
     post.appendChild(glow);
     var box = el('div', 'now');
