@@ -1,6 +1,6 @@
 # VJH Anesthesia: Today
 
-The Today page of the Vernon Jubilee Hospital Department of Anesthesia: where every member is on any day, and who is on call right now. Version 3.1, November 2026.
+The Today page of the Vernon Jubilee Hospital Department of Anesthesia: where every member is on any day, and who is on call right now. Version 3.2, November 2026.
 
 From 3.1 the page also has a calendar, reached from Calendar in the top bar: the same schedule as a scrolling list of days, a week grid of every member, or a month of the reader's own assignments. It uses the schedule the page has already read, so it asks nothing more of the calendar service and works offline.
 
@@ -21,11 +21,11 @@ On the phone, the page keeps the key and the last schedule it read (browser stor
 | `index.html` | The page, with its Content Security Policy: scripts, styles, images and fonts from this site only, and connections to Google's Apps Script hosts only |
 | `app.js` | Everything the page does. The calendar service's address is `SERVICE` near the top |
 | `app.css` | Layout and colours (the palette of the app icon) |
-| `sw.js` | Keeps a copy of these files so the page opens offline. Never sees the schedule |
+| `sw.js` | Keeps a copy of these files and answers from it first, so the page opens at once and offline; checks for a new version in the background. Never sees the schedule |
 | `manifest.webmanifest` | Android's install details and icons. Given only to browsers that install from it; iPhones use `icons/apple-touch-icon.png` |
 | `icons/`, `img/` | App icons, and the laryngoscope that lights the on-call band |
 | `fonts/` | Atkinson Hyperlegible Next, under the SIL Open Font License (`fonts/OFL.txt`) |
 
 ## Updating
 
-Replace a file through GitHub's web editor or Upload files; GitHub Pages republishes within a minute or two. After changing `app.js` or `app.css`, raise the `?v=` number where `index.html` loads them, and the same names and `CACHE` in `sw.js`, so phones pick up the change promptly.
+Replace a file through GitHub's web editor or Upload files; GitHub Pages republishes within a minute or two. After changing `app.js` or `app.css`, raise the `?v=` number where `index.html` loads them, and the same names and `CACHE` in `sw.js`. Phones show an update on the second opening after it is published: the first opening installs it.
