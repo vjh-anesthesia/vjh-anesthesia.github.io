@@ -1,5 +1,5 @@
 /*
- * VJH Anesthesia: Today. Version 3.2, 20 November 2026 (the GitHub Pages edition, with the calendar).
+ * VJH Anesthesia: Today. Version 3.3, 20 November 2026 (the GitHub Pages edition, with the calendar).
  * Requires the calendar service (VJH_Calendar.gs) version 3.0 or later; 3.4 issues links to this page.
  *
  * WHAT IT IS
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '3.2';
+  var VERSION = '3.3';
   // The calendar web app (the schedule Sheet's project). Not a secret: it returns nothing without a member key.
   var SERVICE = 'https://script.google.com/macros/s/AKfycbxPz7RiFA6CFB77qRqqQZ8wz23HNM-VpWC5mWmKYeMgYPUCdLexJPlspH4MzyK82UzBrQ/exec';
   var STORE_KEY = 'vjhToday.key', STORE_DATA = 'vjhToday.schedule';
@@ -679,7 +679,7 @@
       calRefs.strip = calStrip(calShown());
       head.appendChild(calRefs.strip);
     } else if (state.cal === 'week') {
-      var mon = mondayOf(state.calDate), fri = add(mon, 4);
+      var mon = mondayOf(state.calDate), fri = add(mon, 6);   // the week shown runs Monday to Sunday (3.3)
       p = calPick((mon.slice(0, 7) === fri.slice(0, 7) ? String(+mon.slice(8, 10)) : dayMonth(mon)) + ' – ' + dayMonth(fri) + ' ' + fri.slice(0, 4));
       row2.className = 'crow cnav';
       kids(row2, calStep('‹', add(state.calDate, -7), 'Previous week', add(mon, -1) >= FIRST), p.node,
@@ -846,30 +846,17 @@
     }
   }, { passive: true });
 
-  function callText(d) {
-    if (!has(d)) return 'Schedule unavailable.';
-    var day = [], night = [];
-    D.members.forEach(function (_, m) {
-      var x = cell(d, m);
-      if (x && (x[0] === 'daycall' || x[0] === 'nightcall')) (x[0] === 'daycall' ? day : night).push(LABEL[x[0]] + ' ' + D.members[m] + ' ' + span(x[2], x[3]));
-    });
-    var out = day.concat(night);
-    return out.length ? out.join('. ') + '.' : 'No call listed.';
-  }
+  // 3.3: all seven days, Monday to Sunday, fitted to the screen with no sideways scrolling. Saturday and
+  // Sunday are shaded so the weekend reads as its own block.
   function calWeek() {
-    var mon = mondayOf(state.calDate), sat = add(mon, 5), sun = add(mon, 6), t = todayIso(), busy = false, i;
-    // A weekend with rooms or clinic listed gets its own columns; the usual weekend, call only, is a line below.
-    [sat, sun].forEach(function (d) {
-      if (!has(d)) return;
-      D.members.forEach(function (_, m) { var k = kindOf(cell(d, m)); if (k === 'or' || k === 'pac2' || k === 'flagged') busy = true; });
-    });
-    var n = busy ? 7 : 5, wrap = el('div', 'cweekview'), box = el('div', 'wkscroll'), table = el('table', 'wk' + (busy ? ' wide' : ''));
+    var mon = mondayOf(state.calDate), t = todayIso(), n = 7, i;
+    var wrap = el('div', 'cweekview'), box = el('div', 'wkscroll'), table = el('table', 'wk');
     wrap.setAttribute('data-day', inRange(mon) ? mon : state.calDate);
     var thead = el('thead'), tr = el('tr'), corner = el('th');
     corner.setAttribute('scope', 'col'); corner.appendChild(el('span', 'sr', 'Name'));
     tr.appendChild(corner);
     for (i = 0; i < n; i++) {
-      var d = add(mon, i), th = el('th', (d === t ? 'today' : '') + (HOL[d] ? ' hol' : '')), b = button('wkday');
+      var d = add(mon, i), th = el('th', (d === t ? 'today' : '') + (HOL[d] ? ' hol' : '') + (i > 4 ? ' we' : '')), b = button('wkday');
       th.setAttribute('scope', 'col');
       b.setAttribute('data-cal-day', d); b.disabled = !inRange(d);
       b.setAttribute('aria-label', WD[dow(d)] + ' ' + longDate(d) + (HOL[d] ? ', statutory holiday' : '') + ', open in the day view');
@@ -882,24 +869,13 @@
       var r = el('tr', m === D.me ? 'me' : ''), h = el('th');
       h.setAttribute('scope', 'row'); h.appendChild(who(m)); r.appendChild(h);
       for (var j = 0; j < n; j++) {
-        var x = cell(add(mon, j), m), td = el('td'), c = el('span', 'c k-' + kindOf(x), abbr(x));
+        var x = cell(add(mon, j), m), td = el('td', j > 4 ? 'we' : ''), c = el('span', 'c k-' + kindOf(x), abbr(x));
         if (x) c.title = fullText(x);
         td.appendChild(c); r.appendChild(td);
       }
       tb.appendChild(r);
     });
     table.appendChild(tb); box.appendChild(table); wrap.appendChild(box);
-    if (!busy && (inRange(sat) || inRange(sun))) {
-      var a = callText(sat), z = callText(sun), lines = [];
-      if (inRange(sat) && inRange(sun) && a === z) lines.push([sat, 'Sat ' + dayMonth(sat) + ' and Sun ' + dayMonth(sun), a]);
-      else { if (inRange(sat)) lines.push([sat, shortDate(sat), a]); if (inRange(sun)) lines.push([sun, shortDate(sun), z]); }
-      lines.forEach(function (l) {
-        var p = el('p', 'wkend'), lb = button('link', l[1]);
-        lb.setAttribute('data-cal-day', l[0]);
-        kids(p, lb, document.createTextNode(' ' + l[2]));
-        wrap.appendChild(p);
-      });
-    }
     return wrap;
   }
 

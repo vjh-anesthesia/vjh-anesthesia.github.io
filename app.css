@@ -1,4 +1,4 @@
-/* VJH Anesthesia: Today 3.1. Colours from the app icon's palette (see README.md). */
+/* VJH Anesthesia: Today 3.3. Colours from the app icon's palette (see README.md). */
 @font-face { font-family: "Atkinson Hyperlegible Next"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/atkinson-hyperlegible-next-latin-400-normal.woff2) format("woff2"); }
 @font-face { font-family: "Atkinson Hyperlegible Next"; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/atkinson-hyperlegible-next-latin-600-normal.woff2) format("woff2"); }
 @font-face { font-family: "Atkinson Hyperlegible Next"; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/atkinson-hyperlegible-next-latin-700-normal.woff2) format("woff2"); }
@@ -259,22 +259,30 @@ h1 { margin: 0; font-weight: 700; }
 
 /* Week: every member against the days. Month: the reader's own assignment under each date. */
 .cweekview, .cmonthview { padding-top: 6px; }
-.wkscroll { overflow-x: auto; margin: 0 -6px; }
+.wkscroll { overflow-x: auto; margin: 0 -10px; }
 .wk { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.wk.wide { min-width: 30rem; }
-.wk th:first-child { width: 5.8em; }
+.wk th:first-child { width: 7.2em; }
 .wk thead th { padding: 2px 0; font-weight: 400; }
 .wkday { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 44px; border-radius: 8px; }
-.wkday .l { font-size: 13px; color: var(--muted); }
+.wkday .l { font-size: 12px; color: var(--muted); }
 .wkday .n { font-size: 16px; font-weight: 700; }
 .wkday:disabled { opacity: .35; cursor: default; }
 .wk th.today .n { color: var(--accent); }
 .wk th.hol .l { color: var(--hol); font-weight: 700; }
 .wk tbody th, .wk td { border-top: 1px solid var(--line); height: 36px; padding: 2px; }
 .wk tbody th { text-align: left; padding-left: 6px; overflow: hidden; }
-.wk tbody .who { font-size: 15px; font-weight: 700; padding: 6px 0; white-space: nowrap; }
+.wk tbody .who { font-size: 14px; font-weight: 700; padding: 6px 0; white-space: nowrap; }
 .wk .who .you { display: none; }
 .wk tr.me { background: var(--you); }
+/* 3.3: seven columns on a phone. Assignments at 12.5 px; call pills a little tighter so they never touch.
+   Sizes are in em of the table's 12.5 px, so when a phone enlarges its text the grid's minimum width grows
+   with it: past the screen's width the grid slides sideways rather than cutting letters off ("URO" for UROL).
+   At normal text sizes the minimum, 27.5em (344 px), fits a 360 px phone, so no sliding is needed. */
+.wk { font-size: 12.5px; min-width: 27.5em; }
+.wk .c { font-size: 1em; letter-spacing: -0.01em; }
+.wk .c.k-daycall, .wk .c.k-nightcall { letter-spacing: -0.03em; }
+.wk .we { background: rgba(0, 49, 60, .05); }
+@media (prefers-color-scheme: dark) { .wk .we { background: rgba(254, 250, 231, .05); } }
 .c { display: block; min-height: 26px; line-height: 26px; border-radius: 6px; font-size: 14px; text-align: center; white-space: nowrap; overflow: hidden; }
 .c.k-daycall { background: var(--gold); color: var(--dark-teal); font-weight: 700; }
 .c.k-nightcall { background: var(--night); color: var(--on-night); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
@@ -282,8 +290,6 @@ h1 { margin: 0; font-weight: 700; }
 .c.k-pac2 { color: var(--pac); font-weight: 700; }
 .c.k-flagged { color: var(--flag); font-weight: 700; }
 .c.k-vacation, .c.k-dayoff, .c.k-closure, .c.k-none { color: var(--muted); }
-.wkend { margin: 10px 0 0; padding: 0 6px; font-size: 14px; color: var(--muted); }
-.wkend .link { font-size: 14px; padding: 4px 0; }
 .mgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .mhead span { text-align: center; font-size: 13px; color: var(--muted); line-height: 24px; }
 .mday { display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 54px; padding: 4px 1px 3px; border-top: 1px solid var(--line); }

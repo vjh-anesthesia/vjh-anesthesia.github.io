@@ -1,5 +1,5 @@
 /*
- * VJH Today 3.2: the offline copy of the page's own files.
+ * VJH Today 3.3: the offline copy of the page's own files.
  * The phone's copy first (3.2): every file the page needs is answered at once from the copy, so the page
  * opens without waiting on the hospital's network; until 3.1 each file waited up to six seconds for the
  * network before the copy was used. The page itself (index.html) is also fetched in the background and
@@ -10,8 +10,8 @@
  * Only this site's own files pass through here. The schedule request goes to Google directly and is
  * never seen, kept or answered by this worker; the page keeps its last schedule itself.
  */
-var CACHE = 'vjh-today-3.2';
-var FILES = ['./', 'app.css?v=3.2', 'app.js?v=3.2', 'img/laryngoscope.webp', 'icons/apple-touch-icon.png', 'icons/favicon-48.png',
+var CACHE = 'vjh-today-3.3';
+var FILES = ['./', 'app.css?v=3.3', 'app.js?v=3.3', 'img/laryngoscope.webp', 'icons/apple-touch-icon.png', 'icons/favicon-48.png',
   'fonts/atkinson-hyperlegible-next-latin-400-normal.woff2', 'fonts/atkinson-hyperlegible-next-latin-600-normal.woff2',
   'fonts/atkinson-hyperlegible-next-latin-700-normal.woff2'];
 
